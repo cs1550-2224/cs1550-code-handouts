@@ -1,0 +1,358 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>Process Synchronization Problems</title>
+
+		<link rel="stylesheet" href="dist/reset.css">
+		<link rel="stylesheet" href="dist/reveal.css">
+		<link rel="stylesheet" href="dist/theme/black.css" id="theme">
+
+		<!-- Theme used for syntax highlighted code -->
+		<link rel="stylesheet" href="plugin/highlight/monokai.css" id="highlight-theme">
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+				<section>
+					Bounded Buffer
+					<pre class="r-stretch"><code data-trim data-line-numbers="1|2-5|7-10|11,22|12,20,23,31|13-15,24-26|16-18|19|27-29|30|35|36-40|42-46">
+public class SharedQ&lt;ItemType> {
+	private ItemType[] q;
+	private int N, in, out, count;
+	private Lock l;
+	private ConditionVariable producerGo, consumerGo;
+
+	public SharedQ(int N){
+		this.N = N;
+		in = out = count = 0;
+	}
+	public void produce(ItemType item){
+		l.acquire();
+		while(count == N){
+			producerGo.wait(&l);
+		}
+		q[in] = item;
+		in = (in + 1) % N;
+		count++;
+		consumerGo.signal(&l);
+		l.release();
+	}
+	public ItemType consume(){
+		l.acquire();
+		while(count == 0){
+			consumerGo.wait(&l);
+		}
+		ItemType result = q[out];
+		out = (out + 1) % N;
+		count--;
+		producerGo.signal(&l);
+		l.release();
+		return result;
+	}
+}
+SharedQ&lt;Integer> sq = new SharedQ&lt;>(N);
+//Producer Process:
+while(TRUE){
+	//produce an item into item
+	sq.produce(item);
+}
+
+//Consumer Process:
+while(TRUE){
+	Integer item = sq.consume();
+	//consume item
+}
+					</code></pre>
+
+				</section>
+				<section>
+					Readers Writers
+					<pre class="r-stretch"><code data-trim data-line-numbers="1-5|6-7|9-11|12,22,29,39|13,20,23,27,30,37,40,46|15-17|32-34|14,18|19,24|31,35|36,41|25-26|42-45|48-50|51-53|55|56-61|63-68">
+public class RWLock {
+	private int waitingReaders;
+	private int waitingWriters;
+	private int activeReaders;
+	private int activeWriters;
+	private Lock l;
+	private ConditionVariable writerGo, readerGo;
+
+	public RWLock(){
+		activeReaders = activeWriters = waitingReaders = waitingWriters = 0;
+	}
+	public void startRead(){
+		l.acquire();
+		waitingReaders++;
+		while(readerShouldWait()){
+			readerGo.wait(&l);
+		}
+		waitingReaders--;
+		activeReaders++;
+		l.release();
+	}
+	public void doneRead(){
+		l.acquire();
+		activeReaders--;
+		if(waitingWriters > 0)
+			writerGo.signal(&l);
+		l.release();
+	}
+	public void startWrite() {
+		l.acquire();
+		waitingWriters++;
+		while(writerShouldWait()){
+			writerGo.wait(&l);
+		}
+		waitingWriters--;
+		activeWriters++;
+		l.release();
+	}
+	public void doneWrite(){
+		l.acquire();
+		activeWriters--;
+		if(waitingWriters > 0)
+			writerGo.signal(&l);
+		else
+			readerGo.broadcast(&l);
+		l.release();
+	}
+	private boolean readerShouldWait(){
+		return activeWriters > 0 || waitingWriters > 0;
+	}
+	private boolean writerShouldWait(){
+		return activeWriters > 0 || activeReaders > 0;
+	}
+}
+RWLock rwl = new RWLock();
+//Reader Process:
+while(TRUE){
+rwl.startRead();
+//read
+rwl.doneRead();
+}
+
+//Writer Process:
+while(TRUE){
+rwl.startWrite();
+//write
+rwl.doneWrite();
+}
+
+	</code></pre>
+	</section>
+				<section>
+					Dining Philosophers
+					<pre class="r-stretch"><code data-trim data-line-numbers="1|2|3-5|6-8">
+public class DiningPhilosophers {
+	private int N;
+	private int state[N];//HUNGRY, EATING, THINKING
+	private Lock l;
+	private ConditionVariable self[N];
+
+	public DiningPhilosophers(int N){
+		this.N = N;
+		for(int i=0; i&lt;N; i++){
+				state[i] = HUNGRY;
+		}
+	}
+	public void pickup(int i){
+		l.acquire();
+		state[i] = HUNGRY;
+		while(philosopherShouldWait(i)){
+			self[i].wait(&l);
+		}
+		state[i] = EATING;
+		l.release();
+	}
+	public void putdown(int i){
+		l.acquire();
+		state[i] = THINKING;
+		self[(i+1)%N].signal(&l);
+		self[(i-1+N)%N].signal(&l);
+		l.release();
+	}
+	private boolean philosopherShouldWait(int i){
+		return state[(i+1)%N] == EATING ||
+					 state[(i-1+N)%N] == EATING;
+	}
+}
+DiningPhilosophers dp = new DiningPhilosophers(N);
+
+//Philosopher i Process:
+while(TRUE){
+	dp.pickup(i);
+	//eat
+	dp.putdown(i);
+	//think
+}
+				</code></pre>
+				</section>
+				<section>
+					Sleepy Barber
+					<pre class="r-stretch"><code data-trim data-line-numbers="1|2-4|10-15|6-8|17-39|41-47|49|50|51-53|54-56|57|60|62-64|65-69|71|74|75|76-78|79-81|82">
+public class WaitingRoom {
+	private Lock l;
+	private ConditionVariable cond;
+	private int NCHAIRS;
+	private int nfull;
+	private int ticketAvail;
+	private int ticketTurn;
+
+	public WaitingRoom(int NCHAIRS) {
+		nfull = 0;
+		ticketAvail = 0;
+		ticketTurn = -1;
+		this.NCHAIRS = NCHAIRS;
+	}
+	public int custEnter() {
+		l.acquire();
+		int ret;
+		if(nfull == NCHAIRS){
+			ret = WR_FULL;
+		}
+		else {
+			ret = MY_TURN;
+			myTicket = ticketAvail++;
+			nfull++;
+			while(myTicket > ticketTurn){
+				cond.wait(&l);
+			}
+			nfull--;
+		}
+		l.release();
+		return ret;
+	}
+	public int callNextCustomer() {
+		l.acquire();
+		ticketTurn++;
+		if(nfull == 0){
+			ret = EMPTY;
+		}
+		else {
+			ret = BUSY;
+			cond.broadcast(&l);
+		}
+		l.release();
+		return ret;
+	}
+}
+public class BarberChair {
+	private Lock l;
+	private ConditionVariable custUp, barberGetUp, sitDown, seatFree, cutDone;
+	private int state; //EMPTY, BARBER_IN_CHAIR, LONG_HAIR_CUSTOMER, SHORT_HAIR_CUSTOMER
+	private int custWalkedIn;
+
+	public BarberChair () {
+		state = EMPTY;
+		custWalkedIn = 0;
+	}
+	public void napInChair()
+		l.acquire();
+		if(custWalkedIn == 0){ // Cust could arrive before I sit down
+			state = BARBER_IN_CHAIR;
+		}
+		while(custWalkedIn == 0){
+			barberGetUp.wait(&l);
+		}
+		custWalkedIn = 0;
+		if(state == BARBER_IN_CHAIR){ // Cust could have beaten us
+			state = EMPTY;
+			seatFree.signal(&l);
+		}
+		l.release();
+	}
+	public void wakeBarber() {
+		l.acquire();
+		custWalkedIn = 1;
+		barberGetUp.signal(&l);
+		l.release()
+	}
+	public void sitInChair() {
+		l.acquire()
+		while(state != EMPTY){
+			seatFree.wait(&l);
+		}
+		state = LONG_HAIR_CUSTOMER;
+		sitDown.signal(&l);
+		while(state != SHORT_HAIR_CUSTOMER){
+			cutDone.wait(&l);
+		}
+		state = EMPTY;
+		custUp.signal(&l);
+		l.release();
+	}
+	public void cutHair() {
+		l.acquire();
+		while(state != LONG_HAIR_CUSTOMER){
+			sitDown.wait(&l);
+		}
+		state = SHORT_HAIR_CUSTOMER;
+		cutDone.signal(&l);
+		l.release();
+	}
+	public void tellCustomerDone() {
+		l.acquire();
+		while(state != EMPTY){ // NOTE: No other cust can arrive until I call call_next_cust()
+			custUp.wait(&l);
+		}
+		l.release();
+	}
+}
+WaitingRoom wr = new WaitingRoom(NCHAIRS);
+BarberChair bc = new BarberChair();
+//Customer Process:
+status = wr.custEnter();
+if(status == WR_FULL){
+	return;
+}
+bc.wakeBarber();
+bc.sitInChair(); // Wait for chair to be EMPTY
+// Make state LONG_HAIR_CUSTOMER
+// Wait until SHORT_HAIR_CUSTOMER
+// then make chair EMPTY and return
+
+//Barber Process:
+while(TRUE){
+	status = wr.callNextCustomer();
+	if(status == WR_EMPTY){
+		bc.napInChair(); // Set state to BARBER_IN_CHAIR; return with state EMPTY
+	}
+	bc.cutHair(); // Block until LONG_HAIR_CUSTOMER
+	// Return with SHORT_HAIR_CUSTOMER
+	bc.tellCustomerDone(); // Return when EMPTY
+}
+				</code></pre>
+				</section>
+			</div>
+		</div>
+
+    <script src="https://teone.github.io/reveal.js-diagram-plugin/demo/reveal.js/lib/js/head.min.js"></script>
+		<script src="dist/reveal.js"></script>
+		<script src="plugin/notes/notes.js"></script>
+		<script src="plugin/markdown/markdown.js"></script>
+		<script src="plugin/highlight/highlight.js"></script>
+		<script src="https://d3js.org/d3.v4.min.js"></script>
+		<script src="plugin/d3js/d3js.js"></script>
+
+		<script>
+			// More info about initialization & config:
+			// - https://revealjs.com/initialization/
+			// - https://revealjs.com/config/
+			Reveal.initialize({
+				hash: true,
+				controls: false,
+        progress: true,
+        history: true,
+        center: true,
+
+        // transition options: none/fade/slide/convex/concave/zoom
+        transition: 'fade',
+
+				// Learn about plugins: https://revealjs.com/plugins/
+				plugins: [ RevealMarkdown, RevealHighlight, RevealNotes]
+			});
+		</script>
+	</body>
+</html>
